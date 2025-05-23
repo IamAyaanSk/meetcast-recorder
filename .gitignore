@@ -143,3 +143,5 @@ accounts.txt
 src/recon
 item.json
 nodemon.json
+
+stream
