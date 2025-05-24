@@ -2,45 +2,89 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 import { getStream, launch } from 'puppeteer-stream'
-import { getExecutablePath } from '@/utils/puppeteer'
-import { spawn } from 'child_process'
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import express from 'express'
 import cors from 'cors'
+import { Browser, Page } from 'puppeteer-core'
+import Stream from 'stream'
+import { CHROME_BIN, PORT, SOCKET_SERVER_URL } from '@/constants/global'
+import { io, Socket } from 'socket.io-client'
+import { ServerToRecorderEvents, RecorderToServerEvents } from '@/types/socket'
 
-const chromePath = getExecutablePath()
-const meetUrl = process.env.MEET_URL
+// hls output path
+const hlsOutPath = path.resolve('./public/stream')
+
+const socket: Socket<ServerToRecorderEvents, RecorderToServerEvents> = io(SOCKET_SERVER_URL, {
+  extraHeaders: {
+    authorization: `Bearer ${process.env.RECORDER_SPECIFIER_SECRET}`
+  }
+})
+
+// recorder entities for cleanup
+let browser: Browser | null = null
+let stream: Stream.Transform | null = null
+let ffmpeg: ChildProcessWithoutNullStreams | null = null
+let page: Page | null = null
 
 const app = express()
 
 app.use(
   cors({
-    origin: '*',
+    origin: /^http:\/\/localhost(:[0-9]+)?$/,
     credentials: true
   })
 )
 
+// serving hls using express
 app.use('/stream', express.static(path.join(__dirname, '../public/stream')))
 
-app.listen(8080, () => {
-  console.log('Server is running on http://localhost:8080')
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`)
 })
 
-async function startRecording() {
+// socket events
+socket.on('connect', () => {
+  console.log('Connected to socket server')
+})
+
+socket.on('startRecording', async ({ meetUrl }) => {
+  console.log('Starting recording', meetUrl)
+  await startRecording({ meetUrl })
+})
+
+socket.on('stopRecording', async () => {
+  console.log('Stopping recording')
+  await stopRecording()
+})
+
+socket.on('getRecorderStatus', () => {
+  console.log('Getting recorder status', !!stream)
+  socket.emit('recorderStatus', {
+    isRecording: !!stream
+  })
+})
+
+socket.on('disconnect', async () => {
+  console.log('Disconnected from socket server')
+  // Cleanup if some recording is running
+  if (stream || ffmpeg || page || browser) {
+    console.log('Cleaning up resources')
+    await stopRecording()
+  }
+})
+
+async function startRecording({ meetUrl }: { meetUrl: string }) {
   try {
-    if (!meetUrl) {
-      throw new Error('Meet url not found')
+    if (!fs.existsSync(hlsOutPath)) {
+      fs.mkdirSync(hlsOutPath, { recursive: true })
     }
 
-    const outputDir = path.resolve('./public/stream')
+    let hlsStreamAvailable = false
 
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true })
-    }
-
-    const browser = await launch({
-      executablePath: chromePath,
+    browser = await launch({
+      executablePath: CHROME_BIN,
       defaultViewport: {
         width: 1345,
         height: 810
@@ -49,23 +93,25 @@ async function startRecording() {
       headless: true
     })
 
-    const context = browser.defaultBrowserContext()
-    // TODO: Remove this when integrated at server and client
-    await context.overridePermissions(meetUrl, ['camera', 'microphone'])
-
-    const page = await browser.newPage()
+    page = await browser.newPage()
     await page.setViewport({
       width: 1345,
       height: 780
+    })
+
+    // add headers to page
+    await page.setExtraHTTPHeaders({
+      authorization: `Bearer ${process.env.CLIENT_SPECIFIER_SECRET}`,
+      'x-meetcast-recorder-token': `Bearer ${process.env.RECORDER_AUTH_SECRET}`
     })
 
     await page.goto(meetUrl, {
       waitUntil: 'networkidle2'
     })
 
-    const stream = await getStream(page, { audio: true, video: true })
+    stream = await getStream(page, { audio: true, video: true })
 
-    const ffmpeg = spawn('ffmpeg', [
+    ffmpeg = spawn('ffmpeg', [
       '-i',
       'pipe:0',
       '-c:v',
@@ -78,10 +124,6 @@ async function startRecording() {
       '120',
       '-sc_threshold',
       '0',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '128k',
       '-f',
       'hls',
       '-hls_time',
@@ -101,17 +143,39 @@ async function startRecording() {
 
     stream.pipe(ffmpeg.stdin)
 
-    ffmpeg.stderr.on('data', (data) => {
-      console.error(`FFmpeg stderr: ${data}`)
-    })
+    // ffmpeg.stderr.on('data', (data) => {
+    //   console.error(`FFmpeg stderr: ${data}`)
+    // })
 
     ffmpeg.on('close', (code) => {
       console.log(`FFmpeg exited with code ${code}`)
     })
 
-    console.log('recording')
+    console.log('started Recording')
 
-    await new Promise((resolve) => setTimeout(resolve, 600000))
+    // know that stream.m3u8 is ready
+    ffmpeg.stderr.on('data', (data: Buffer) => {
+      const output = data.toString()
+      // console.log('FFmpeg output:', output)
+      if (output.includes("Opening 'public/stream/stream.m3u8.tmp'") && !hlsStreamAvailable) {
+        console.log('Recording started and stream.m3u8 is ready')
+
+        socket.emit('recorderStatus', {
+          isRecording: true
+        })
+        hlsStreamAvailable = true
+      }
+    })
+  } catch (error) {
+    console.error('Error starting recording:', error)
+  }
+}
+
+async function stopRecording() {
+  try {
+    if (!stream || !ffmpeg || !page || !browser) {
+      throw new Error('Recording is not running')
+    }
 
     stream.destroy()
     ffmpeg.stdin.end()
@@ -124,16 +188,19 @@ async function startRecording() {
     await browser.close()
     console.log('recording stopped')
 
-    console.log('file closed')
+    // delete entire stream folder
+    fs.rm(hlsOutPath, { recursive: true, force: true }, (err) => {
+      if (err) {
+        console.error('Error deleting stream folder:', err)
+      }
+      console.log('Stream folder deleted')
+    })
+
+    stream = null
+    ffmpeg = null
+    page = null
+    browser = null
   } catch (error) {
-    console.error('Error starting recording:', error)
+    console.error('Error stopping recording:', error)
   }
 }
-
-startRecording().catch((error) => {
-  console.error('Error in startRecording:', error)
-})
-
-// TODO:
-// connect to socket server
-// implement start/stop recording via events dynamically

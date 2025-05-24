@@ -2,7 +2,7 @@ import child_process from 'child_process'
 
 // I took this util function directly from puppeteer-stream official example
 // We need to set CHROME_BIN env variable ( for the spinned up docker container maybe ) to work smoothly for deployment
-export const getExecutablePath = () => {
+export const getChromeBinPath = () => {
   if (process.env.CHROME_BIN) {
     return process.env.CHROME_BIN
   }
