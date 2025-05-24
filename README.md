@@ -25,14 +25,14 @@ to the client over express server. It creates a socket connection with the SFU s
    ```bash
    pnpm install
    ```
-5. Set env variables
+4. Set env variables
    Refer the `.env.example` file for setup.
-6. Configure the client and SFU server too ( check readme for specific repositories for more information )
-7. To start the serrver in dev mode
+5. Configure the client and SFU server too ( check readme for specific repositories for more information )
+6. To start the serrver in dev env
    ```bash
    pnpm dev
    ```
-9. To start in prod mode
+7. To start in prod env
     ```bash
    pnpm build && pnpm start
     ```
