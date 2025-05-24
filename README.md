@@ -22,11 +22,20 @@ to the client over express server. It creates a socket connection with the SFU s
 1. Clone this repository.
 2. Install FFMPEG ( important ).
 3. Install dependencies
-   `pnpm install`
-4. Set env variables
+   ```bash
+   pnpm install
+   ```
+5. Set env variables
    Refer the `.env.example` file for setup.
-5. Configure the client and SFU server too ( check readme for specific repositories for more information )
-6. To start the serrver in dev mode
-   `pnpm dev`
-7. To start in prod mode
-   `pnpm build && pnpm start`
+6. Configure the client and SFU server too ( check readme for specific repositories for more information )
+7. To start the serrver in dev mode
+   ```bash
+   pnpm dev
+   ```
+9. To start in prod mode
+    ```bash
+   pnpm build && pnpm start
+    ```
+
+## Author 
+### Ayaan Shaikh
