@@ -51,11 +51,19 @@ socket.on('connect', () => {
 
 socket.on('startRecording', async ({ meetUrl }) => {
   console.log('Starting recording', meetUrl)
+  if (stream || ffmpeg || page || browser) {
+    console.log('Recording is already running, stopping it first')
+    await stopRecording()
+  }
   await startRecording({ meetUrl })
 })
 
 socket.on('stopRecording', async () => {
   console.log('Stopping recording')
+  if (!stream || !ffmpeg || !page || !browser) {
+    console.log('No recording is running')
+    return
+  }
   await stopRecording()
 })
 
