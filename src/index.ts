@@ -97,8 +97,7 @@ async function startRecording({ meetUrl }: { meetUrl: string }) {
         width: 1345,
         height: 810
       },
-      args: ['--headless=chrome'],
-      headless: true
+      args: ['--headless=chrome']
     })
 
     page = await browser.newPage()
@@ -109,7 +108,6 @@ async function startRecording({ meetUrl }: { meetUrl: string }) {
 
     // add headers to page
     await page.setExtraHTTPHeaders({
-      authorization: `Bearer ${process.env.CLIENT_SPECIFIER_SECRET}`,
       'x-meetcast-recorder-token': `Bearer ${process.env.RECORDER_AUTH_SECRET}`
     })
 
